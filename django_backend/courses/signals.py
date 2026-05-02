@@ -9,8 +9,13 @@ logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=CourseFile)
 def create_notification_on_new_file(sender, instance: CourseFile, created: bool, **kwargs):
-    if not created:
-        return
+    # Both 'created' and 'update' actions should trigger a notification
+    action = 'create' if created else 'update'
+    
+    # Optional logic to avoid sending a notification if there's already an unacknowledged update
+    if action == 'update':
+        if Notification.objects.filter(file=instance, acknowledged=False, action_type='update').exists():
+            return
 
     course = instance.course
     # Collect subscribers for the exact triplet
@@ -32,6 +37,7 @@ def create_notification_on_new_file(sender, instance: CourseFile, created: bool,
         study_year=course.study_year,
         semester=course.semester,
         subscriber_ids=subscriber_ids,
+        action_type=action,
     )
     logger.info("Notification created for file %s to %d subscribers", instance.original_filename, len(subscriber_ids))
 

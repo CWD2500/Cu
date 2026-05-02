@@ -1,8 +1,22 @@
 from rest_framework import generics, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from django.conf import settings
+from rest_framework import permissions
+
+class HasBotAPIKey(permissions.BasePermission):
+    """
+    Custom permission to only allow requests with a valid BOT_API_KEY.
+    """
+    def has_permission(self, request, view):
+        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+        if auth_header.startswith('Bearer '):
+            token = auth_header.split('Bearer ')[1]
+            return token == getattr(settings, 'BOT_API_KEY', None)
+        return False
+
 from .models import Department, StudyYear, Semester, CourseType, Course, CourseFile, Subscription, Notification
 from .serializers import (
     DepartmentSerializer, StudyYearSerializer, SemesterSerializer,
@@ -46,6 +60,7 @@ class CourseDetailView(generics.RetrieveAPIView):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def get_departments(request):
     """Get all departments for Telegram bot"""
     departments = Department.objects.all()
@@ -54,6 +69,7 @@ def get_departments(request):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def get_study_years(request):
     """Get all study years for Telegram bot"""
     study_years = StudyYear.objects.all()
@@ -62,6 +78,7 @@ def get_study_years(request):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def get_semesters(request):
     """Get all semesters for Telegram bot"""
     semesters = Semester.objects.all()
@@ -70,6 +87,7 @@ def get_semesters(request):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def get_course_types(request):
     """Get all course types for Telegram bot"""
     course_types = CourseType.objects.all()
@@ -78,6 +96,7 @@ def get_course_types(request):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def get_courses_by_filters(request):
     """Get courses filtered by department, year, semester, and course type"""
     department_id = request.GET.get('department_id')
@@ -87,13 +106,13 @@ def get_courses_by_filters(request):
     
     courses = Course.objects.select_related('department', 'study_year', 'semester', 'course_type')
     
-    if department_id:
+    if department_id and department_id.isdigit():
         courses = courses.filter(department_id=department_id)
-    if study_year_id:
+    if study_year_id and study_year_id.isdigit():
         courses = courses.filter(study_year_id=study_year_id)
-    if semester_id:
+    if semester_id and semester_id.isdigit():
         courses = courses.filter(semester_id=semester_id)
-    if course_type_id:
+    if course_type_id and course_type_id.isdigit():
         courses = courses.filter(course_type_id=course_type_id)
     
     serializer = CourseListSerializer(courses, many=True)
@@ -101,6 +120,7 @@ def get_courses_by_filters(request):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def get_course_files(request, course_id):
     """Get all files for a specific course"""
     course = get_object_or_404(Course, id=course_id)
@@ -110,20 +130,27 @@ def get_course_files(request, course_id):
 
 
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def download_file(request, file_id):
     """Download a specific file"""
     course_file = get_object_or_404(CourseFile, id=file_id)
-    
-    response = FileResponse(
-        course_file.file,
-        as_attachment=True,
-        filename=course_file.original_filename
-    )
-    return response
+    try:
+        response = FileResponse(
+            course_file.file,
+            as_attachment=True,
+            filename=course_file.original_filename
+        )
+        return response
+    except (FileNotFoundError, ValueError):
+        return Response(
+            {"detail": "File is missing from server disk."}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
 
 
 # --- Subscriptions API for bot ---
 @api_view(['GET', 'POST'])
+@permission_classes([HasBotAPIKey])
 def bot_subscriptions(request):
     if request.method == 'GET':
         telegram_user_id = request.GET.get('telegram_user_id')
@@ -174,6 +201,7 @@ def bot_subscriptions(request):
 
 
 @api_view(['DELETE'])
+@permission_classes([HasBotAPIKey])
 def bot_subscription_detail(request, pk):
     try:
         sub = Subscription.objects.get(pk=pk)
@@ -185,20 +213,28 @@ def bot_subscription_detail(request, pk):
 
 # --- Notifications API for bot ---
 @api_view(['GET'])
+@permission_classes([HasBotAPIKey])
 def notifications_pending_view(request):
-    pending = Notification.objects.filter(acknowledged=False).select_related('department', 'study_year', 'semester').order_by('created_at')[:100]
+    pending = Notification.objects.filter(acknowledged=False).select_related(
+        'department', 'study_year', 'semester', 'file__course__course_type'
+    ).order_by('created_at')[:100]
+    
     data = [{
         'id': n.id,
+        'action_type': n.action_type,
         'file_name': n.file_name,
         'department_name': n.department.name,
         'year_name': getattr(n.study_year, 'year', str(n.study_year)),
         'semester_name': n.semester.name,
+        'course_name': n.file.course.name if n.file and n.file.course else 'غير محدد',
+        'course_type': n.file.course.course_type.get_name_display() if n.file and n.file.course and n.file.course.course_type else '',
         'subscriber_ids': n.subscriber_ids,
     } for n in pending]
     return Response(data)
 
 
 @api_view(['POST'])
+@permission_classes([HasBotAPIKey])
 def notifications_ack_view(request):
     ids = request.data.get('ids')
     if not isinstance(ids, list):

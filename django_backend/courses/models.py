@@ -1,4 +1,6 @@
 from django.db import models
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 
 class Department(models.Model):
@@ -139,7 +141,8 @@ class Notification(models.Model):
     department = models.ForeignKey(Department, on_delete=models.CASCADE)
     study_year = models.ForeignKey(StudyYear, on_delete=models.CASCADE)
     semester = models.ForeignKey(Semester, on_delete=models.CASCADE)
-    subscriber_ids = models.JSONField(default=list)
+    subscriber_ids = models.JSONField(default=list, blank=True, null=True, help_text="قائمة بأرقام المشتركين (اتركه فارغاً)")
+    action_type = models.CharField(max_length=20, choices=[('create', 'إضافة'), ('update', 'تعديل')], default='create')
     created_at = models.DateTimeField(auto_now_add=True)
     acknowledged = models.BooleanField(default=False)
 
@@ -150,4 +153,6 @@ class Notification(models.Model):
         ]
 
     def __str__(self):
-        return f"Notif({self.file_name}) - {self.department.name} - {self.study_year.year} - {self.semester.name}"
+        return f"Notif({self.file_name}) - {self.get_action_type_display()} - {self.department.name} - {self.study_year.year} - {self.semester.name}"
+
+

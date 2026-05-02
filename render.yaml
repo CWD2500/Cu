@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: course-bot-system
+    env: python
+    buildCommand: "pip install -r requirements_render.txt"
+    startCommand: "bash render_start.sh"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "*"
